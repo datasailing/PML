@@ -1,0 +1,205 @@
+---
+title: "Prediction of Qualitative Exercise Performance"
+author: "V Oliveira"
+date: "28 March 2017"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+1. Executive Summary
+
+This study explores the potential of accelerometers for determining whether the activity of lifting a dumbell is done correctly or not. The data for this study was compiled using accelerometers on the belt, forearm, arm and the dumbell itself and 6 participants performed the activity that was labelled according to how they did it. The task at hand is to be able to predict accurately if the manner in which the activity is performed. After an initial examination the data was cleaned and preprocessed in order to eliminate covariates that could not help solve the question. The whole of the training data was used to build a prediction model using the Random Forest classification algorithm. As this method is very prone to overfitting a thorough cross validation check was carried out, via both K fold and Random Sampling. The results attained were very conclusive and robust. Both cross validation methods estimate an out of sample error less than 1% and accuracy greater than 99%. Consequently the model created via Random Forest was selelected as it proved accurate and robust with the data made available for this project.   
+
+
+
+2. Description of the project
+
+The 6 participants in the study were asked to perform 10 repetitions of  unilateral dumbbell biceps curl in five ways: according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). The participants were supervised by a qualified person who made sure they followed the instructions and consequently the data was labelled correctly. The aim of the study is be able to assess if exercised is done properly based on the data obtained from the accelerometers. It is important to try to minimise any biases so that the predictive power of the model can be generalised to new data. One obvious source of bias is the way each participant performs the activity and that must be minised.
+
+
+
+3. The data
+
+The training data for this project can be found here:
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>
+
+And the test data here:
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv>
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+setwd("C:/Users/Vinny/Documents/R")
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(data.table)
+library(lubridate)
+library(TTR)
+library(zoo)
+library(stringr)
+library(urca)
+library("quantmod")
+library("tseries")
+library(caret)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+testing <- tbl_df(fread("./pml-testing.csv", stringsAsFactors=FALSE))
+training <- tbl_df(fread("./pml-training.csv", stringsAsFactors=FALSE))
+```
+
+
+
+4. Exploratory Data Analisys
+
+The trainind dta consists of 19622 observations of 160 variables. The last variable of the training set is the classe variable, which is the classification that the projet aims to predict. Normally a visual inspection of the individual variables is carried out in order to learn more information about the data, but due to the large number of variable a more numerical anaylis is performed.
+
+```{r echo=FALSE}
+str(training)
+```
+```{r echo=FALSE}
+training$classe <- as.factor(training$classe)
+summary(training$classe)
+```
+
+One feature that stands out is the large number of variable with all or many missing values. In order to clean the data of variables with zero or near zero variance the data will be preprocessed in the next stage of the study.
+
+
+
+5. Preprocessing
+
+As the objective of this machine learning exercise is predicting the qualitative aspect of the exercise based on the sensors data it is important to remove some variables from the modellind, such as user and he time stamp, as it is obvious that new data will not have aything to do with the participants in this study nor the time of the day the tests were carried out. This will remove a potential bias from the prediction model, it is important to only use sensor data.
+Sensor data starts at covariate number 8, "roll_belt", so let us subset it from there. The next step is to search and eliminate covariates with zero or near zero variance.
+
+```{r echo=FALSE}
+training <- training[,8:160]
+#nearZeroVar(training, saveMetrics = TRUE)
+z <- nearZeroVar(training)
+training <- training[,-c(z)]
+```
+
+There are still many covariates remaining with many missing values 'NA'. The criteria used was that any variable with more than 50% of observations with missing values will be removed completely from the training data.
+```{r echo=FALSE}
+nacols <- function(x) {
+  if (sum(is.na(x))/length(x)>0.5){
+    1}
+    else
+      0
+} 
+  
+zz <- as.data.frame(sapply(training,nacols ))
+zx <- colnames(training)
+x <- data.frame(zz,zx)
+## set row names for using as index of columns
+row.names(x) <- 1:nrow(x)
+
+x <- x[x$sapply.training..nacols.==1,]
+y <- as.vector(as.integer( row.names(x)))
+tr <- select(training, -y)
+
+## same operations on the testing dataset
+testing <- testing[,8:160]
+testing <- testing[,-c(z)]
+testing <- select(testing, -y)
+
+```
+Data ready for analysis with only significant covariates:
+```{r}
+str(tr)
+```
+
+
+
+6. Classification and Cross Validation
+
+In order to make the required predictions the first method to be applied is random forest classification, if the the accuracy achieved with it is not high then other methods will be explored.It is important to note that cross validation
+is essential for estimating out of sample error with random forest algorithm as it is prone to overfitting. The whole of the training dataset will be used to train the model, but it will subsequently be subset into subtraining and subtesting sets in order to perform cross validation.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(randomForest)
+library(verification)
+set.seed(1)
+```
+```{r}
+modrf <- randomForest(classe~.,data = tr)
+```
+List of the order of importance of variables, in decreasing order:
+```{r, echo=FALSE}
+or <- order(varImp(modrf),decreasing=TRUE)
+names(tr[,or])
+```
+
+As mentioned above it is extremely important to cross validate, two forms of cross validation will be applied in orderr to confidently assess out of sample error. Firstly by K fold cross validation with 3 folds then by Random Sampling with 3 samples.
+
+
+K Fold
+```{r echo=FALSE}
+## via rfcv 
+x <- data.frame(tr[,1:52])
+y <- tr$classe
+result <- rfcv(x, y, cv.fold=3)
+with(result, plot(n.var, error.cv, log="x", type="o", lwd=2))
+```
+```{r echo=FALSE}
+round(result$error.cv,4)
+```
+
+
+Random Sampling 
+```{r echo=FALSE}
+## Random Sampling Cross validation step by step
+k <- 3                 # number of samples
+n <- floor(nrow(tr)/k) # size of each sample rounded down
+errvector <- rep(NA,k) # store error rate in this vector
+## loop over the k folds
+for (i in 1:k){
+  # subset the data randomly
+  subset <- sample(1:nrow(tr), n, replace = FALSE, prob = NULL)
+  cvtrain <- tr[-subset,] # new training data
+  cvtest <- tr[subset,]   # new test data
+  # fit random forest on this new datasets
+  fit <- randomForest(classe~.,data = cvtrain)
+  pred <- predict(fit, cvtest)
+  # calculate model accuracy for each fold
+  errvector[i] <- round( 1-sum(cvtest$classe==pred)/nrow(cvtest),4)
+  
+  print(paste("Misclassification Rate for sample ", i, ":", errvector[i]))
+}
+```
+```{r echo=FALSE}
+print(paste("Average Misclassification Rate", round( mean(errvector),4)))
+```
+
+As an example of out of the sample error expected see the confusion matrix for the third sample and the error related to the number of trees:
+```{r echo=FALSE}
+predrf <- predict(fit, cvtest)
+confusionMatrix(predrf, cvtest$classe)
+plot(fit)
+```
+
+
+7. Conclusion
+
+As both means of cross validation provided similar results with high accuracy, greater then 99% for all combinations of training and testing datasets which is very high and satisfactory. This is encouraging and this implies the model will generalise well to new data. Based on these results I predict the out of sample error will be larger than the cross validation estimates of it but still low at less 1%.
+
+
+
+8. Prediction on the testing data
+
+```{r echo=FALSE}
+predrf<- predict(modrf, testing)
+final <- as.data.frame(predrf)
+names(final) <- "prediction"
+final
+```
+
+
